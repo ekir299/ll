@@ -318,6 +318,69 @@ class DataManager():
         return train, test
     # --> end xval data splitting methods
 
+    def build_scaling_model(self, mlp_layers, use_image_scales, mlp_width=None, image_layers=0):
+        from careless.models.scaling.image import HybridImageScaler,ImageScaler
+        from careless.models.scaling.nn import MLPScaler
+
+        if mlp_width is None:
+            mlp_width = BaseModel.get_metadata(self.inputs).shape[-1]
+
+        if image_layers > 0:
+            from careless.models.scaling.image import NeuralImageScaler
+            n_images = np.max(BaseModel.get_image_id(self.inputs)) + 1
+            scaling_model = NeuralImageScaler(
+                image_layers,
+                n_images,
+                mlp_layers,
+                mlp_width,
+            )
+        else:
+            mlp_scaler = MLPScaler(mlp_layers, mlp_width)
+            if use_image_scales:
+                n_images = np.max(BaseModel.get_image_id(self.inputs)) + 1
+                image_scaler = ImageScaler(n_images)
+                scaling_model = HybridImageScaler(mlp_scaler, image_scaler)
+            else:
+                scaling_model = mlp_scaler
+
+        return scaling_model
+
+    def build_scaling_model_from_parser(self, parser):
+        return self.build_scaling_model(parser.mlp_layers, parser.use_image_scales, parser.mlp_width, parser.image_layers)
+
+    def build_likelihood(self, likelihood_type, studentt_dof=None, refine_uncertainties=False):
+        """
+        Parameters
+        ----------
+        likelihood_type : str
+            'mono' or 'poly' for monochromatic or Laue data.
+        studentt_dof : float
+            Degrees of freedom for studentt distributed likelihoods. The default, None, implies a normal distribution.
+        refine_uncertainties : bool
+            If True, refine the empirical uncertainties using the Ev11 model. The default is False
+        """
+
+        if likelihood_type  == 'poly':
+            if refine_uncertainties:
+                from careless.models.likelihoods.laue import NormalEv11Likelihood as NormalLikelihood
+                from careless.models.likelihoods.laue import StudentTEv11Likelihood as StudentTLikelihood
+            else:
+                from careless.models.likelihoods.laue import NormalLikelihood,StudentTLikelihood
+        elif likelihood_type == 'mono':
+            if refine_uncertainties:
+                from careless.models.likelihoods.mono import NormalEv11Likelihood as NormalLikelihood
+                from careless.models.likelihoods.mono import StudentTEv11Likelihood as StudentTLikelihood
+            else:
+                from careless.models.likelihoods.mono import NormalLikelihood,StudentTLikelihood
+
+        if studentt_dof is None:
+            return NormalLikelihood()
+        else:
+            return StudentTLikelihood(studentt_dof)
+
+    def build_likelihood_from_parser(self, parser):
+            return self.build_likelihood(parser.type, parser.studentt_likelihood_dof, parser.refine_uncertainties)
+
     def build_model(self, parser=None, surrogate_posterior=None, prior=None, likelihood=None, scaling_model=None, mc_sample_size=None):
         """
         Build the model specified in parser, a careless.parser.parser.parse_args() result. Optionally override any of the 
@@ -326,26 +389,10 @@ class DataManager():
         """
         from careless.models.merging.surrogate_posteriors import TruncatedNormal
         from careless.models.merging.variational import VariationalMergingModel
-        from careless.models.scaling.image import HybridImageScaler,ImageScaler
-        from careless.models.scaling.nn import MLPScaler
         if parser is None:
             parser = self.parser
         if parser is None:
             raise ValueError("No parser supplied, but self.parser is unset")
-
-        if parser.type == 'poly':
-            if parser.refine_uncertainties:
-                from careless.models.likelihoods.laue import NormalEv11Likelihood as NormalLikelihood
-                from careless.models.likelihoods.laue import StudentTEv11Likelihood as StudentTLikelihood
-            else:
-                from careless.models.likelihoods.laue import NormalLikelihood,StudentTLikelihood
-        elif parser.type == 'mono':
-            if parser.refine_uncertainties:
-                from careless.models.likelihoods.mono import NormalEv11Likelihood as NormalLikelihood
-                from careless.models.likelihoods.mono import StudentTEv11Likelihood as StudentTLikelihood
-            else:
-                from careless.models.likelihoods.mono import NormalLikelihood,StudentTLikelihood
-
         parents = parser.parents
         r_values = parser.dwr
         if prior is None and parents is None:
@@ -361,34 +408,9 @@ class DataManager():
             surrogate_posterior = TruncatedNormal.from_loc_and_scale(loc, scale, low)
 
         if likelihood is None:
-            dof = parser.studentt_likelihood_dof
-            if dof is None:
-                likelihood = NormalLikelihood()
-            else:
-                likelihood = StudentTLikelihood(dof)
-
+            likelihood = self.build_likelihood_from_parser(parser)
         if scaling_model is None:
-            mlp_width = parser.mlp_width
-            if mlp_width is None:
-                mlp_width = BaseModel.get_metadata(self.inputs).shape[-1]
-
-            if parser.image_layers > 0:
-                from careless.models.scaling.image import NeuralImageScaler
-                n_images = np.max(BaseModel.get_image_id(self.inputs)) + 1
-                scaling_model = NeuralImageScaler(
-                    parser.image_layers,
-                    n_images,
-                    parser.mlp_layers,
-                    mlp_width,
-                )
-            else:
-                mlp_scaler = MLPScaler(parser.mlp_layers, mlp_width)
-                if parser.use_image_scales:
-                    n_images = np.max(BaseModel.get_image_id(self.inputs)) + 1
-                    image_scaler = ImageScaler(n_images)
-                    scaling_model = HybridImageScaler(mlp_scaler, image_scaler)
-                else:
-                    scaling_model = mlp_scaler
+            scaling_model = self.build_scaling_model_from_parser(parser)
 
         model = VariationalMergingModel(surrogate_posterior, prior, likelihood, scaling_model, parser.mc_samples)
 
