@@ -379,7 +379,7 @@ class DataManager():
             return StudentTLikelihood(studentt_dof)
 
     def build_likelihood_from_parser(self, parser):
-            return self.build_likelihood(parser.type, parser.studentt_likelihood_dof, parser.refine_uncertainties)
+        return self.build_likelihood(parser.type, parser.studentt_likelihood_dof, parser.refine_uncertainties)
 
     def build_model(self, parser=None, surrogate_posterior=None, prior=None, likelihood=None, scaling_model=None, mc_sample_size=None):
         """
