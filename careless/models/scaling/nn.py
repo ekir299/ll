@@ -2,9 +2,31 @@ import tensorflow as tf
 from tensorflow_probability import distributions as tfd
 import tensorflow_probability as tfp
 from careless.models.scaling.base import Scaler
+from tensorflow import keras as tfk
 import numpy as np
 
 
+
+
+class ResnetLayer(tfk.layers.Layer):
+    def __init__(self, units, activation='ReLU', **kwargs):
+        super().__init__()
+        self._dense_kwargs = kwargs
+        self.activation_1 = tfk.activations.get(activation)
+        self.activation_2 = tfk.activations.get(activation)
+        self.units = units
+
+    def build(self, shape, **kwargs):
+        self.dense_1 = tfk.layers.Dense(self.units, **self._dense_kwargs)
+        self.dense_2 = tfk.layers.Dense(shape[-1], **self._dense_kwargs)
+
+    def call(self, X, **kwargs):
+        out = X
+        out = self.activation_1(out)
+        out = self.dense_1(out)
+        out = self.activation_2(out)
+        out = self.dense_2(out)
+        return out + X
 
 
 class MetadataScaler(Scaler):
@@ -28,21 +50,16 @@ class MetadataScaler(Scaler):
 
         mlp_layers = []
 
-        for i in range(n_layers):
-            if leakiness is None:
-                activation = tf.keras.layers.ReLU()
-            else:
-                activation = tf.keras.layers.LeakyReLU(leakiness)
-                #activation = tf.keras.activations.exponential
+        kernel_initializer = tfk.initializers.VarianceScaling(
+            scale = 1./5./n_layers,
+            mode='fan_avg', 
+            distribution='truncated_normal',
+        )
 
+        for i in range(n_layers):
             mlp_layers.append(
-                tf.keras.layers.Dense(
-                    width, 
-                    activation=activation, 
-                    use_bias=True, 
-                    kernel_initializer='identity'
-                    )
-                )
+                ResnetLayer(2*width, kernel_initializer=kernel_initializer)
+            )
 
         #The last layer is linear and generates location/scale params
         tfp_layers = []
@@ -51,7 +68,7 @@ class MetadataScaler(Scaler):
                 tfp.layers.IndependentNormal.params_size(), 
                 activation='linear', 
                 use_bias=True, 
-                kernel_initializer='identity'
+                kernel_initializer=kernel_initializer
             )
         )
 
