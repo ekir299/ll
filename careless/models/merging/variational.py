@@ -12,7 +12,7 @@ class VariationalMergingModel(tfk.Model, BaseModel):
     """
     Merge data with a posterior parameterized by a surrogate distribution.
     """
-    def __init__(self, surrogate_posterior, prior, likelihood, scaling_model, mc_sample_size=1):
+    def __init__(self, surrogate_posterior, prior, likelihood, scaling_model, mc_sample_size=1, scale_prior=None, scale_prior_weight=1.):
         """"
         Parameters
         ----------
@@ -37,9 +37,11 @@ class VariationalMergingModel(tfk.Model, BaseModel):
         super().__init__()
         self.prior = prior
         self.surrogate_posterior = surrogate_posterior
+        self.scale_prior_weight = scale_prior_weight
         self.likelihood = likelihood
         self.scaling_model = scaling_model
         self.mc_sample_size = mc_sample_size
+        self.scale_prior = scale_prior
 
     def prediction_mean_stddev(self, inputs):
         """
@@ -101,6 +103,15 @@ class VariationalMergingModel(tfk.Model, BaseModel):
 
         scale_dist = self.scaling_model(inputs)
         z_scale = scale_dist.sample(self.mc_sample_size)
+        if self.scale_prior is not None:
+            try:
+                scale_kl_div = scale_dist.kl_divergence(self.scale_prior)
+            except NotImplementedError:
+                scale_kl_div = scale_dist.log_prob(z_scale) - self.scale_prior.log_prob(z_scale)
+                scale_kl_div /= self.mc_sample_size
+            scale_kl_div = tf.reduce_sum(scale_kl_div)
+            self.add_loss(self.scale_prior_weight * scale_kl_div)
+            self.add_metric(scale_kl_div, name="Σ KLDiv")
 
         kl_div = tf.reduce_sum(self.surrogate_posterior.log_prob(z_f) - self.prior.log_prob(z_f))
 
@@ -120,7 +131,7 @@ class VariationalMergingModel(tfk.Model, BaseModel):
         self.add_loss(-ll)
         self.add_loss(kl_div)
         self.add_metric(-ll, name="NLL")
-        self.add_metric(kl_div, name="KLDiv")
+        self.add_metric(kl_div, name="F KLDiv")
 
         return ipred
 

@@ -54,12 +54,12 @@ class HybridImageScaler(Scaler):
         Parameters
         ----------
         """
-        q = self.mlp_scaler(inputs)
+        result = self.mlp_scaler.network(inputs)
+        # This relies on knowing the structure of `mlp_scaler.distribution`. 
+        loc_and_scale = self.mlp_scaler.distribution.layers[0](result)
         a = self.image_scaler(inputs)
-        return tfp.distributions.TransformedDistribution(
-            q,
-            tfp.bijectors.Scale(scale=a),
-        )
+        q = self.mlp_scaler.distribution.layers[1](loc_and_scale * [a, 1.])
+        return q
 
 
 class ImageLayer(Scaler):

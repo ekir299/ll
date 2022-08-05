@@ -42,4 +42,12 @@ args_and_kwargs = (
         "dest" : "use_image_scales",
         "default": True,
     }),
+
+    (("--scale-prior-weight",), {
+        "help": "Weight for the scale KL divergence term. Defaults to 1.",
+        "type":float,
+        "default": 1.,
+    }),
+
+
 )

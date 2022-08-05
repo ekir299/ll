@@ -5,6 +5,15 @@ from careless.models.scaling.base import Scaler
 import numpy as np
 
 
+class LogNormalLayer(tf.keras.layers.Layer):
+    def __init__(self, eps=1e-5):
+        super().__init__()
+        self.eps = eps
+
+    def call(self, loc_and_scale):
+        loc, scale = tf.unstack(loc_and_scale, axis=-1)
+        scale = tf.math.softplus(scale) + self.eps
+        return tfd.LogNormal(loc, scale)
 
 
 class MetadataScaler(Scaler):
@@ -48,7 +57,7 @@ class MetadataScaler(Scaler):
         tfp_layers = []
         tfp_layers.append(
             tf.keras.layers.Dense(
-                tfp.layers.IndependentNormal.params_size(), 
+                2, 
                 activation='linear', 
                 use_bias=True, 
                 kernel_initializer='identity'
@@ -56,7 +65,7 @@ class MetadataScaler(Scaler):
         )
 
         #The final layer converts the output to a Normal distribution
-        tfp_layers.append(tfp.layers.IndependentNormal())
+        tfp_layers.append(LogNormalLayer())
 
         self.network = tf.keras.Sequential(mlp_layers)
         self.distribution = tf.keras.Sequential(tfp_layers)

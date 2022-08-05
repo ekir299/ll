@@ -7,6 +7,21 @@ from careless.models.base import BaseModel
 from careless.utils.positional_encoding import positional_encoding
 from typing import Optional
 
+def iso_bfactor_scale(df, ikey='intensity', sigkey='uncertainty', inv_d_sq_key='dHKL'):
+    iobs = df[ikey].to_numpy()
+    sigiobs = df[sigkey].to_numpy()
+    w = np.where(iobs > 0., 1., 0.)
+    w = w / w.sum()
+    d_inv_sq = df[inv_d_sq_key].to_numpy()
+    X = np.concatenate((d_inv_sq[:,None], np.ones_like(iobs)[:,None]), axis=-1)
+    y = np.log(np.where(iobs > 0., iobs, 1.))
+    b = y * w
+    A = X * w[...,None]
+    from scipy.linalg import lstsq
+    ((b1, b2), _, _, _) = lstsq(A, b)
+    k = np.exp(-b1 * d_inv_sq) * np.exp(-b2)
+    return rs.DataSet(data={'k': k}, index=df.index)
+
 def get_first_key_of_dtype(ds, dtype):
     matches = ds.dtypes[ds.dtypes == dtype].keys()
     for match in matches:
@@ -122,6 +137,10 @@ class DataFormatter():
                 return rs.read_crystfel(filename)
 
         return self((load(f) for f in files))
+
+    def _standardize_i_sigi(self, iobs, sigiobs):
+        scale = 1. / np.mean(iobs)
+        return scale * iobs, scale * sigiobs
 
 class MonoFormatter(DataFormatter):
     """
@@ -321,12 +340,17 @@ class MonoFormatter(DataFormatter):
             data.get_hkls(),
             )
 
+        #scale = 1. / data.groupby('image_id').transform('mean')['intensity']
+        scale = data.groupby('image_id').apply(iso_bfactor_scale).to_numpy().flatten()
+        iobs = (scale * data['intensity']).to_numpy('float32')[:,None]
+        sigiobs = (scale * data['uncertainty']).to_numpy('float32')[:,None]
+
         inputs = {
             'refl_id'   : refl_id[:,None],
             'image_id'  : data['image_id'].to_numpy('int64')[:,None],
             'metadata'  : metadata,
-            'intensities'   : data['intensity'].to_numpy('float32')[:,None],
-            'uncertainties' : data['uncertainty'].to_numpy('float32')[:,None],
+            'intensities'   : iobs,
+            'uncertainties' : sigiobs,
         }
 
         return self.pack_inputs(inputs), rac
@@ -564,16 +588,18 @@ class LaueFormatter(DataFormatter):
             )
 
         iobs  = data[['harmonic_id',   'intensity']].groupby('harmonic_id').first().to_numpy('float32')
-        sigma = data[['harmonic_id', 'uncertainty']].groupby('harmonic_id').first().to_numpy('float32')
+        sigiobs = data[['harmonic_id', 'uncertainty']].groupby('harmonic_id').first().to_numpy('float32')
         iobs  = np.pad( iobs, [[0, len(refl_id) - len( iobs)], [0, 0]], constant_values=1.)
-        sigma = np.pad(sigma, [[0, len(refl_id) - len(sigma)], [0, 0]], constant_values=1.)
+        sigiobs = np.pad(sigiobs, [[0, len(refl_id) - len(sigiobs)], [0, 0]], constant_values=1.)
+
+        iobs,sigiobs = self._standardize_i_sigi(iobs, sigiobs)
 
         inputs = {
             'refl_id'   : refl_id[:,None],
             'image_id'  : data['image_id'].to_numpy('int64')[:,None],
             'metadata'  : metadata,
             'intensities'   : iobs,
-            'uncertainties'   : sigma,
+            'uncertainties'   : sigiobs,
             'wavelength' : data[self.wavelength_key].to_numpy('float32')[:,None],
             'harmonic_id' : data['harmonic_id'].to_numpy('int64')[:,None],
         }
