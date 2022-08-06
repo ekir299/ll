@@ -60,7 +60,13 @@ class VariationalMergingModel(tfk.Model, BaseModel):
         refl_id = self.get_refl_id(inputs)
         #Let's actually return the expected value of the data under the current model
         #This is <F**2.>
-        scale_dist = self.scaling_model(inputs)
+        F = tf.concat((
+            self.surrogate_posterior.mean()[...,None],
+            self.surrogate_posterior.stddev()[...,None],
+        ), axis=-1)
+        F = tf.stop_gradient(F)
+        F = tf.gather(F, tf.squeeze(refl_id, axis=-1))
+        scale_dist = self.scaling_model(inputs, F = F)
         f2 = tf.square(self.surrogate_posterior.mean()) + tf.square(self.surrogate_posterior.stddev())
         iexp = scale_dist.mean() * tf.gather(f2, tf.squeeze(refl_id, axis=-1), axis=-1)
         iexp = iexp.numpy()
@@ -97,14 +103,21 @@ class VariationalMergingModel(tfk.Model, BaseModel):
         predictions : tf.Tensor
             Values predicted by the model for this sample. 
         """
+        refl_id = self.get_refl_id(inputs)
         z_f = self.surrogate_posterior.sample(self.mc_sample_size)
 
-        scale_dist = self.scaling_model(inputs)
+        F = tf.concat((
+            self.surrogate_posterior.mean()[...,None],
+            self.surrogate_posterior.stddev()[...,None],
+        ), axis=-1)
+        F = tf.stop_gradient(F)
+        F = tf.gather(F, tf.squeeze(refl_id, axis=-1))
+        scale_dist = self.scaling_model(inputs, F = F)
+
         z_scale = scale_dist.sample(self.mc_sample_size)
 
         kl_div = tf.reduce_sum(self.surrogate_posterior.log_prob(z_f) - self.prior.log_prob(z_f))
 
-        refl_id = self.get_refl_id(inputs)
 
         ipred = z_scale * tf.square(tf.gather(z_f, tf.squeeze(refl_id, axis=-1), axis=-1))
 

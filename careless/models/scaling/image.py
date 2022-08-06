@@ -2,6 +2,7 @@ import tensorflow as tf
 from tensorflow import keras as tfk
 from careless.models.base import BaseModel
 from careless.models.scaling.base import Scaler
+from careless.models.scaling.nn import ResnetLayer
 import tensorflow_probability as tfp
 import numpy as np
 
@@ -24,7 +25,7 @@ class ImageScaler(Scaler):
     def scales(self):
         return tf.concat(([1.], self._scales), axis=-1)
 
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         """
         Parameters
         ----------
@@ -50,7 +51,7 @@ class HybridImageScaler(Scaler):
         self.mlp_scaler = mlp_scaler
         self.image_scaler = image_scaler
 
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         """ Parameters
         ----------
         """
@@ -124,6 +125,20 @@ class ImageLayer(Scaler):
 
         return out + data
 
+class Pooling(tfk.layers.Layer):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.dense_kwargs = kwargs
+
+    def build(self, shape, dtype=None):
+        self.layer = tfk.layers.Dense(shape[-1] + 1, **self.dense_kwargs)
+
+    def call(self, x, **kwargs):
+        y = self.layer(x)
+        probs = tf.math.softmax(y[...,0], axis=-1)[...,None,:]
+        per_image = tf.reduce_sum((tf.squeeze(probs, -2)[...,None] * y[...,1:]), -2)
+        return per_image
+
 class NeuralImageScaler(Scaler):
     def __init__(self, image_layers, max_images, mlp_layers, mlp_width, leakiness=0.01):
         super().__init__()
@@ -135,25 +150,47 @@ class NeuralImageScaler(Scaler):
             tnorm = tfk.initializers.TruncatedNormal(0., scale)
             return tnorm(shape, dtype=dtype, **kwargs)
 
-        for i in range(image_layers):
-            layers.append(
-                ImageLayer(mlp_width, max_images, kernel_initializer=kernel_initializer)
-            )
+        layers.append(tfk.layers.Dense(mlp_width, kernel_initializer=kernel_initializer))
+        for i in range(mlp_layers):
+            layers.append(ResnetLayer(mlp_width, kernel_initializer=kernel_initializer))
+            layers.append(Pooling(kernel_initializer=kernel_initializer))
 
-        self.image_layers = layers
-        from careless.models.scaling.nn import MetadataScaler
-        self.metadata_scaler = MetadataScaler(mlp_layers, mlp_width, leakiness)
 
-    def call(self, inputs):
-        result = self.get_metadata(inputs)
-        image_id = self.get_image_id(inputs),
+        self.image_encoder = tfk.models.Sequential([
+            tfk.layers.Dense(mlp_width),
+        ] + [
+            ResnetLayer(mlp_width, kernel_initializer=kernel_initializer) for i in range(mlp_layers)
+        ] + [
+            Pooling(kernel_initializer=kernel_initializer),
+        ])
 
-        result = self.metadata_scaler.network(result)
-        # One could use this line to add a skip connection here
-        #result = result + self.get_metadata(inputs)
+        self.decoder = tfk.models.Sequential(
+        [
+            ResnetLayer(mlp_width, kernel_initializer=kernel_initializer) for i in range(mlp_layers)
+        ] + [
+            tfk.layers.Dense(2),
+            tfp.layers.IndependentNormal(),
+        ])
 
-        for layer in self.image_layers:
-            result = layer((result, image_id))
-        result = self.metadata_scaler.distribution(result)
-        return result
+    def call(self, inputs, F=None, **kwargs):
+        metadata = self.get_metadata(inputs)
+        iobs = self.get_intensities(inputs)
+        sigiobs = self.get_uncertainties(inputs)
+        image_id = self.get_image_id(inputs)
+
+        image_rep = [metadata, iobs, sigiobs]
+        if F is not None:
+            image_rep.append(F)
+        image_rep = tf.concat(image_rep, axis=-1)
+        image_rep = tf.RaggedTensor.from_value_rowids(
+            image_rep, tf.squeeze(image_id, axis=-1)
+        )
+        image_rep = self.image_encoder(image_rep)
+
+        scale_inp = tf.concat((
+            metadata,
+            tf.squeeze(tf.gather(image_rep, image_id)),
+        ), axis=-1)
+
+        return self.decoder(scale_inp)
 

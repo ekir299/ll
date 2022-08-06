@@ -78,7 +78,7 @@ class MetadataScaler(Scaler):
         self.network = tf.keras.Sequential(mlp_layers)
         self.distribution = tf.keras.Sequential(tfp_layers)
 
-    def call(self, metadata):
+    def call(self, metadata, **kwargs):
         """
         Parameters
         ----------
@@ -93,7 +93,7 @@ class MetadataScaler(Scaler):
 
 
 class MLPScaler(MetadataScaler):
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         """
         Parameters
         ----------
