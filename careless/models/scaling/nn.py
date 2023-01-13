@@ -12,7 +12,7 @@ class ResNetLayer(tfk.layers.Layer):
     def __init__(
             self,
             activation='ReLU', 
-            kernel_initializer='identity',
+            kernel_initializer=None,
             dropout=None,
         ):
         super().__init__()
@@ -25,13 +25,25 @@ class ResNetLayer(tfk.layers.Layer):
 
     def build(self, shapes, **kwargs):
         width = shapes[-1]
+
+        if self.kernel_initializer is None:
+            kernel_initializer = tfk.initializers.variance_scaling(0.1, mode='fan_avg')
+        else:
+            kernel_initializer = self.kernel_initializer
+        
         self.dense_1 = tfk.layers.Dense(
             width,
-            kernel_initializer=self.kernel_initializer,
+            kernel_initializer=kernel_initializer,
         )
+
+        if self.kernel_initializer is None:
+            kernel_initializer = tfk.initializers.variance_scaling(0.1, mode='fan_avg')
+        else:
+            kernel_initializer = self.kernel_initializer
+
         self.dense_2 = tfk.layers.Dense(
             width,
-            kernel_initializer=self.kernel_initializer,
+            kernel_initializer=kernel_initializer,
         )
 
     def call(self, x, **kwargs):
@@ -83,7 +95,7 @@ class MetadataScaler(Scaler):
         """
         super().__init__()
 
-        kernel_initializer = 'glorot_normal'
+        kernel_initializer = tfk.initializers.variance_scaling(0.1, mode='fan_avg')
         mlp_layers = [
             tfk.layers.Dense(width, kernel_initializer=kernel_initializer)
         ]
@@ -91,7 +103,7 @@ class MetadataScaler(Scaler):
         for i in range(n_layers):
             mlp_layers.append(ResNetLayer(
                     activation='ReLU', 
-                    kernel_initializer=kernel_initializer,
+                    kernel_initializer=None,
                     dropout=dropout,
                     )
                 )
@@ -103,7 +115,7 @@ class MetadataScaler(Scaler):
                 2, 
                 activation='linear', 
                 use_bias=True, 
-                kernel_initializer='identity'
+                kernel_initializer='glorot_normal',
             )
         )
 
