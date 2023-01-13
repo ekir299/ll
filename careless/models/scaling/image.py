@@ -1,4 +1,5 @@
 import tensorflow as tf
+from tensorflow import keras as tfk
 from careless.models.base import BaseModel
 from careless.models.scaling.base import Scaler
 import tensorflow_probability as tfp
@@ -63,23 +64,41 @@ class HybridImageScaler(Scaler):
 
 
 class ImageLayer(Scaler):
-    def __init__(self, units, max_images, activation=None, **kwargs):
+    def __init__(self, units, max_images, activation=None, dropout=0.1, **kwargs):
         super().__init__(**kwargs)
         self.activation = tf.keras.activations.get(activation)
         self.units = units
         self.max_images = max_images
+        self.dropout = dropout
 
     def build(self, input_shape):
-        def initializer(shape, dtype=tf.float32, **kwargs):
-            return tf.eye(shape[1], shape[2], (shape[0],), dtype=dtype)
+        initializer = 'glorot_normal'
+        #def initializer(shape, dtype=tf.float32, **kwargs):
+        #    return tf.eye(shape[1], shape[2], (shape[0],), dtype=dtype)
 
-        self.w = self.add_weight(
+        if self.dropout is not None:
+            self.dropout = tfk.layers.Dropout(self.dropout)
+
+        self.w2 = self.add_weight(
             name='kernel',
             shape=(self.max_images, self.units, input_shape[0][-1]),
             initializer=initializer,
             trainable=True,
         )
-        self.b = self.add_weight(
+        self.b2 = self.add_weight(
+            name='bias', 
+            shape=(self.max_images, self.units),
+            initializer='zeros',
+            trainable=True,
+        )
+
+        self.w1 = self.add_weight(
+            name='kernel',
+            shape=(self.max_images, self.units, input_shape[0][-1]),
+            initializer=initializer,
+            trainable=True,
+        )
+        self.b1 = self.add_weight(
             name='bias', 
             shape=(self.max_images, self.units),
             initializer='zeros',
@@ -89,10 +108,26 @@ class ImageLayer(Scaler):
     def call(self, metadata_and_image_id, *args, **kwargs):
         data,image_id = metadata_and_image_id
         image_id = tf.squeeze(image_id)
-        w = tf.gather(self.w, image_id, axis=0)
-        b = tf.gather(self.b, image_id, axis=0)
-        result = self.activation(tf.squeeze(tf.matmul(w, data[...,None]), axis=-1) + b)
-        return result
+        w1 = tf.gather(self.w1, image_id, axis=0)
+        b1 = tf.gather(self.b1, image_id, axis=0)
+
+        w2 = tf.gather(self.w2, image_id, axis=0)
+        b2 = tf.gather(self.b2, image_id, axis=0)
+
+        out = data
+
+        out = self.activation(out)
+        out = tf.squeeze(tf.matmul(w1, out[...,None]), axis=-1) + b1
+
+        out = self.activation(out)
+        out = tf.squeeze(tf.matmul(w2, out[...,None]), axis=-1) + b2
+
+        if self.dropout is not None:
+            out = self.dropout(out)
+
+        out = out + data
+
+        return out 
 
 class NeuralImageScaler(Scaler):
     def __init__(self, image_layers, max_images, mlp_layers, mlp_width, leakiness=0.01, epsilon=1e-7):

@@ -1,10 +1,51 @@
 import tensorflow as tf
+from tensorflow import keras as tfk
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability import bijectors as tfb
 import tensorflow_probability as tfp
 from careless.models.scaling.base import Scaler
 import numpy as np
 
+
+
+class ResNetLayer(tfk.layers.Layer):
+    def __init__(
+            self,
+            activation='ReLU', 
+            kernel_initializer='identity',
+            dropout=None,
+        ):
+        super().__init__()
+        self.kernel_initializer = kernel_initializer
+        self.activation = tfk.activations.get(activation)
+        if dropout is None:
+            self.dropout = None
+        else:
+            self.dropout = tfk.layers.Dropout(dropout)
+
+    def build(self, shapes, **kwargs):
+        width = shapes[-1]
+        self.dense_1 = tfk.layers.Dense(
+            width,
+            kernel_initializer=self.kernel_initializer,
+        )
+        self.dense_2 = tfk.layers.Dense(
+            width,
+            kernel_initializer=self.kernel_initializer,
+        )
+
+    def call(self, x, **kwargs):
+        out = x
+        out = self.activation(out)
+        out = self.dense_1(out)
+        out = self.activation(out)
+        out = self.dense_2(out)
+
+        if self.dropout is not None:
+            out = self.dropout(out)
+
+        out = out + x
+        return out
 
 class NormalLayer(tf.keras.layers.Layer):
     def __init__(self, scale_bijector=None, epsilon=1e-7, **kwargs): 
@@ -28,7 +69,7 @@ class MetadataScaler(Scaler):
     Neural network based scaler with simple dense layers.
     This neural network outputs a normal distribution.
     """
-    def __init__(self, n_layers, width, leakiness=0.01, epsilon=1e-7):
+    def __init__(self, n_layers, width, leakiness=0.01, epsilon=1e-7, dropout=0.1):
         """
         Parameters
         ----------
@@ -42,21 +83,16 @@ class MetadataScaler(Scaler):
         """
         super().__init__()
 
-        mlp_layers = []
+        kernel_initializer = 'glorot_normal'
+        mlp_layers = [
+            tfk.layers.Dense(width, kernel_initializer=kernel_initializer)
+        ]
 
         for i in range(n_layers):
-            if leakiness is None:
-                activation = tf.keras.layers.ReLU()
-            else:
-                activation = tf.keras.layers.LeakyReLU(leakiness)
-                #activation = tf.keras.activations.exponential
-
-            mlp_layers.append(
-                tf.keras.layers.Dense(
-                    width, 
-                    activation=activation, 
-                    use_bias=True, 
-                    kernel_initializer='identity'
+            mlp_layers.append(ResNetLayer(
+                    activation='ReLU', 
+                    kernel_initializer=kernel_initializer,
+                    dropout=dropout,
                     )
                 )
 
