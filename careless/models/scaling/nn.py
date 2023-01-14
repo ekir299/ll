@@ -81,7 +81,7 @@ class MetadataScaler(Scaler):
     Neural network based scaler with simple dense layers.
     This neural network outputs a normal distribution.
     """
-    def __init__(self, n_layers, width, leakiness=0.01, epsilon=1e-7, dropout=0.1):
+    def __init__(self, n_layers, width, leakiness=0.01, epsilon=1e-5, dropout=0.1):
         """
         Parameters
         ----------
@@ -107,6 +107,7 @@ class MetadataScaler(Scaler):
                     dropout=dropout,
                     )
                 )
+        mlp_layers.append(tfk.layers.LayerNormalization())
 
         #The last layer is linear and generates location/scale params
         tfp_layers = []
